@@ -19,7 +19,7 @@ type (
 	// ErrorOpt is an error options function used by [New]
 	ErrorOpt = func(e *Error)
 
-	// ErrorWriter writes errors to a string writer
+	// ErrorWriter writes errors to an [io.StringWriter]
 	ErrorWriter interface {
 		WriteError(b io.StringWriter)
 	}
@@ -85,21 +85,21 @@ func (e *Error) As(target interface{}) bool {
 	return errors.As(e.Kind, target)
 }
 
-// OptMsg sets [Error.Message]
+// OptMsg returns an [ErrorOpt] that sets [Error] Message
 func OptMsg(msg string) ErrorOpt {
 	return func(e *Error) {
 		e.Message = msg
 	}
 }
 
-// OptKind sets [Error.Kind]
+// OptKind returns an [ErrorOpt] that sets [Error] Kind
 func OptKind(kind error) ErrorOpt {
 	return func(e *Error) {
 		e.Kind = kind
 	}
 }
 
-// OptInner sets [Error.Inner]
+// OptInner returns an [ErrorOpt] that sets [Error.Inner]
 func OptInner(inner error) ErrorOpt {
 	return func(e *Error) {
 		e.Inner = inner
@@ -121,7 +121,7 @@ func NewStackTrace(skip int) *StackTrace {
 	return e
 }
 
-// WriteError implements [ErrorWriter]
+// WriteError implements [ErrorWriter] and writes the stack trace
 func (e *StackTrace) WriteError(b io.StringWriter) {
 	b.WriteString("\n")
 	if e.n <= 0 {
@@ -156,12 +156,12 @@ func addStackTrace(err error, skip int) error {
 	}
 }
 
-// WithMsg returns a wrapped error with a message
+// WithMsg returns an error wrapped by an [*Error] with a Message
 func WithMsg(err error, msg string) error {
 	return New(OptMsg(msg), OptInner(err))
 }
 
-// WithKind returns a wrapped error with a kind and message
+// WithKind returns an error wrapped by an [*Error] with a Kind and Message
 func WithKind(err error, kind error, msg string) error {
 	return New(OptMsg(msg), OptKind(kind), OptInner(err))
 }
