@@ -2,6 +2,7 @@ package kerrors
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"testing"
 
@@ -19,10 +20,10 @@ func (e testErr) Error() string {
 func TestError(t *testing.T) {
 	t.Parallel()
 
+	stackRegex := regexp.MustCompile(`Stack trace \[\S+ \S+:\d+\]`)
+
 	errorsErr := errors.New("test errors err")
 	nestedErr := WithKind(WithMsg(errorsErr, "another message"), testErr{}, "test error message")
-
-	stackRegex := regexp.MustCompile(`Stack trace \[\n(?:\S*\n\t\S+:\d+ \(0x[0-9a-f]+\)\n)+\]`)
 
 	for _, tc := range []struct {
 		Test   string
@@ -86,6 +87,44 @@ func TestError(t *testing.T) {
 func TestStackTrace(t *testing.T) {
 	t.Parallel()
 
+	stackRegex := regexp.MustCompile(`^(?:\S+\n\t\S+:\d+ \(0x[0-9a-f]+\)\n)+$`)
+
+	t.Run("StackFormat", func(t *testing.T) {
+		t.Parallel()
+
+		assert := require.New(t)
+
+		st := NewStackTrace(0)
+		assert.Regexp(stackRegex, st.StackString())
+	})
+
+	t.Run("empty stack", func(t *testing.T) {
+		t.Parallel()
+
+		assert := require.New(t)
+
+		st := NewStackTrace(8)
+		assert.Equal("", st.Error())
+		assert.Equal("", st.StackFormat(""))
+	})
+}
+
+func TestStackFrame(t *testing.T) {
+	t.Parallel()
+
 	assert := require.New(t)
-	assert.Equal("\n", NewStackTrace(8).Error())
+
+	assert.Equal("someFunc file.go:127 (0x271)", fmt.Sprintf("%+v", StackFrame{
+		Function: "someFunc",
+		File:     "file.go",
+		Line:     127,
+		PC:       0x271,
+	}))
+
+	assert.Equal("%!z(StackFrame=someFunc file.go:127)", fmt.Sprintf("%z", StackFrame{
+		Function: "someFunc",
+		File:     "file.go",
+		Line:     127,
+		PC:       0x271,
+	}))
 }

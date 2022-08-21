@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -19,9 +20,9 @@ type (
 	// ErrorOpt is an error options function used by [New]
 	ErrorOpt = func(e *Error)
 
-	// ErrorWriter writes errors to an [io.StringWriter]
+	// ErrorWriter writes errors to an [io.Writer]
 	ErrorWriter interface {
-		WriteError(b io.StringWriter)
+		WriteError(b io.Writer)
 	}
 )
 
@@ -36,23 +37,23 @@ func New(opts ...ErrorOpt) error {
 }
 
 // WriteError implements [ErrorWriter]
-func (e *Error) WriteError(b io.StringWriter) {
-	b.WriteString(e.Message)
+func (e *Error) WriteError(b io.Writer) {
+	io.WriteString(b, e.Message)
 	if e.Kind != nil {
-		b.WriteString(" [")
+		io.WriteString(b, " [")
 		if k, ok := e.Kind.(ErrorWriter); ok {
 			k.WriteError(b)
 		} else {
-			b.WriteString(e.Kind.Error())
+			io.WriteString(b, e.Kind.Error())
 		}
-		b.WriteString("]")
+		io.WriteString(b, "]")
 	}
 	if e.Inner != nil {
-		b.WriteString(": ")
+		io.WriteString(b, ": ")
 		if k, ok := e.Inner.(ErrorWriter); ok {
 			k.WriteError(b)
 		} else {
-			b.WriteString(e.Inner.Error())
+			io.WriteString(b, e.Inner.Error())
 		}
 	}
 }
@@ -112,6 +113,14 @@ type (
 		n  int
 		pc [128]uintptr
 	}
+
+	// StackFrame is a stack trace frame
+	StackFrame struct {
+		Function string
+		File     string
+		Line     int
+		PC       uintptr
+	}
 )
 
 // NewStackTrace creates a new [*StackTrace]
@@ -122,19 +131,13 @@ func NewStackTrace(skip int) *StackTrace {
 }
 
 // WriteError implements [ErrorWriter] and writes the stack trace
-func (e *StackTrace) WriteError(b io.StringWriter) {
-	b.WriteString("\n")
+func (e *StackTrace) WriteError(b io.Writer) {
 	if e.n <= 0 {
 		return
 	}
-	frameIter := runtime.CallersFrames(e.pc[:e.n])
-	for {
-		frame, more := frameIter.Next()
-		b.WriteString(fmt.Sprintf("%s\n\t%s:%d (0x%x)\n", frame.Function, frame.File, frame.Line, frame.PC))
-		if !more {
-			break
-		}
-	}
+	frameIter := runtime.CallersFrames(e.pc[:1])
+	f, _ := frameIter.Next()
+	fmt.Fprint(b, runtimeFrameToFrame(f))
 }
 
 // Error implements error and prints the stack trace
@@ -142,6 +145,69 @@ func (e *StackTrace) Error() string {
 	b := strings.Builder{}
 	e.WriteError(&b)
 	return b.String()
+}
+
+// StackFormat formats each frame of the stack trace with the format specifier
+func (e *StackTrace) StackFormat(format string) string {
+	if e.n <= 0 {
+		return ""
+	}
+	b := strings.Builder{}
+	frameIter := runtime.CallersFrames(e.pc[:e.n])
+	for {
+		f, more := frameIter.Next()
+		fmt.Fprintf(&b, format, runtimeFrameToFrame(f))
+		if !more {
+			break
+		}
+	}
+	return b.String()
+}
+
+// StackString formats each frame of the stack trace with the default format
+func (e *StackTrace) StackString() string {
+	return e.StackFormat("%[1]f\n\t%[1]e:%[1]l (0x%[1]c)\n")
+}
+
+// Format implements [fmt.Formatter]
+//
+//   - %f   function name
+//   - %e   file path
+//   - %l   file line number
+//   - %c   program counter in hex
+//   - %s   equivalent to error string "%f %e:%l"
+//   - %v   equivalent to error string "%f %e:%l"
+//   - %+v  equivalent to stack string "%f %e:%l (0x%c)"
+func (f StackFrame) Format(s fmt.State, verb rune) {
+	switch verb {
+	case 'f':
+		io.WriteString(s, f.Function)
+	case 'e':
+		io.WriteString(s, f.File)
+	case 'l':
+		io.WriteString(s, strconv.Itoa(f.Line))
+	case 'c':
+		io.WriteString(s, strconv.FormatUint(uint64(f.PC), 16))
+	case 's':
+		fmt.Fprintf(s, "%f %e:%l", f, f, f)
+	case 'v':
+		if s.Flag('+') {
+			fmt.Fprintf(s, "%f %e:%l (0x%c)", f, f, f, f)
+		} else {
+			fmt.Fprintf(s, "%s", f)
+		}
+	default:
+		fmt.Fprintf(s, "%%!%c(StackFrame=%v)", verb, f)
+	}
+}
+
+func runtimeFrameToFrame(f runtime.Frame) StackFrame {
+	return StackFrame{
+		Function: f.Function,
+		File:     f.File,
+		Line:     f.Line,
+		PC:       f.PC,
+	}
 }
 
 func addStackTrace(err error, skip int) error {
