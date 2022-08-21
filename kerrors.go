@@ -100,7 +100,7 @@ func OptKind(kind error) ErrorOpt {
 	}
 }
 
-// OptInner returns an [ErrorOpt] that sets [Error.Inner]
+// OptInner returns an [ErrorOpt] that sets [Error] Inner
 func OptInner(inner error) ErrorOpt {
 	return func(e *Error) {
 		e.Inner = inner
