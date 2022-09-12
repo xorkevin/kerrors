@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -74,6 +75,9 @@ func TestError(t *testing.T) {
 			assert.Equal(tc.Msg, k.Message)
 			errMsg := err.Error()
 			assert.Regexp(stackRegex, errMsg)
+			stackstr := stackRegex.FindString(errMsg)
+			assert.Contains(stackstr, "xorkevin.dev/kerrors/kerrors_test.go")
+			assert.Contains(stackstr, "xorkevin.dev/kerrors.TestError")
 			assert.Equal(tc.ErrMsg, stackRegex.ReplaceAllString(errMsg, "%!(STACKTRACE)"))
 			if tc.Kind != nil {
 				assert.ErrorIs(err, tc.Kind)
@@ -94,8 +98,11 @@ func TestStackTrace(t *testing.T) {
 
 		assert := require.New(t)
 
-		st := NewStackTrace(0)
-		assert.Regexp(stackRegex, st.StackString())
+		st := NewStackTrace(1)
+		stackstr := st.StackString()
+		assert.Regexp(stackRegex, stackstr)
+		assert.Contains(stackstr, "xorkevin.dev/kerrors/kerrors_test.go")
+		assert.True(strings.HasPrefix(stackstr, "xorkevin.dev/kerrors.TestStackTrace"))
 	})
 
 	t.Run("empty stack", func(t *testing.T) {
@@ -115,6 +122,20 @@ func TestStackFrame(t *testing.T) {
 	assert := require.New(t)
 
 	assert.Equal("someFunc file.go:127 (0x271)", fmt.Sprintf("%+v", StackFrame{
+		Function: "someFunc",
+		File:     "file.go",
+		Line:     127,
+		PC:       0x271,
+	}))
+
+	assert.Equal("someFunc file.go:127", fmt.Sprintf("%v", StackFrame{
+		Function: "someFunc",
+		File:     "file.go",
+		Line:     127,
+		PC:       0x271,
+	}))
+
+	assert.Equal("someFunc file.go:127", fmt.Sprintf("%s", StackFrame{
 		Function: "someFunc",
 		File:     "file.go",
 		Line:     127,

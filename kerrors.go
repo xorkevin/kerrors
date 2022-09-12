@@ -15,6 +15,7 @@ type (
 		Message string
 		Kind    error
 		Inner   error
+		skip    int
 	}
 
 	// ErrorOpt is an error options function used by [New]
@@ -28,11 +29,14 @@ type (
 
 // New creates a new [*Error]
 func New(opts ...ErrorOpt) error {
-	e := &Error{}
+	e := &Error{
+		// assume that the caller wants the line at which New is called
+		skip: 1,
+	}
 	for _, i := range opts {
 		i(e)
 	}
-	e.Inner = addStackTrace(e.Inner, 2)
+	e.Inner = addStackTrace(e.Inner, 1+e.skip)
 	return e
 }
 
@@ -104,6 +108,14 @@ func OptKind(kind error) ErrorOpt {
 func OptInner(inner error) ErrorOpt {
 	return func(e *Error) {
 		e.Inner = inner
+	}
+}
+
+// OptSkip returns an [ErrorOpt] that increments [Error] skip by a number of
+// frames for stack trace
+func OptSkip(skip int) ErrorOpt {
+	return func(e *Error) {
+		e.skip += skip
 	}
 }
 
@@ -189,12 +201,12 @@ func (f StackFrame) Format(s fmt.State, verb rune) {
 	case 'c':
 		io.WriteString(s, strconv.FormatUint(uint64(f.PC), 16))
 	case 's':
-		fmt.Fprintf(s, "%f %e:%l", f, f, f)
+		fmt.Fprintf(s, "%s %s:%s", f.Function, f.File, strconv.Itoa(f.Line))
 	case 'v':
 		if s.Flag('+') {
-			fmt.Fprintf(s, "%f %e:%l (0x%c)", f, f, f, f)
+			fmt.Fprintf(s, "%s %s:%s (0x%s)", f.Function, f.File, strconv.Itoa(f.Line), strconv.FormatUint(uint64(f.PC), 16))
 		} else {
-			fmt.Fprintf(s, "%s", f)
+			fmt.Fprintf(s, "%s %s:%s", f.Function, f.File, strconv.Itoa(f.Line))
 		}
 	default:
 		fmt.Fprintf(s, "%%!%c(StackFrame=%v)", verb, f)
@@ -224,10 +236,10 @@ func addStackTrace(err error, skip int) error {
 
 // WithMsg returns an error wrapped by an [*Error] with a Message
 func WithMsg(err error, msg string) error {
-	return New(OptMsg(msg), OptInner(err))
+	return New(OptMsg(msg), OptInner(err), OptSkip(1))
 }
 
 // WithKind returns an error wrapped by an [*Error] with a Kind and Message
 func WithKind(err error, kind error, msg string) error {
-	return New(OptMsg(msg), OptKind(kind), OptInner(err))
+	return New(OptMsg(msg), OptKind(kind), OptInner(err), OptSkip(1))
 }
