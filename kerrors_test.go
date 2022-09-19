@@ -145,6 +145,15 @@ func TestStackTrace(t *testing.T) {
 	})
 }
 
+func TestStackStringerMatcher(t *testing.T) {
+	t.Parallel()
+
+	assert := require.New(t)
+
+	m := StackStringerMatcher{}
+	assert.NotEqual("", m.Error())
+}
+
 func TestStackFrame(t *testing.T) {
 	t.Parallel()
 
