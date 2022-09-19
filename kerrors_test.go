@@ -70,6 +70,9 @@ func TestError(t *testing.T) {
 
 			err := New(tc.Opts...)
 			assert.Error(err)
+			msger, ok := err.(ErrorMsger)
+			assert.True(ok)
+			assert.Equal(tc.Msg, msger.ErrorMsg())
 			var k *Error
 			assert.ErrorAs(err, &k)
 			assert.Equal(tc.Msg, k.Message)

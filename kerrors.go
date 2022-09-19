@@ -25,6 +25,11 @@ type (
 	ErrorWriter interface {
 		WriteError(b io.Writer)
 	}
+
+	// ErrorMsger returns the error message
+	ErrorMsger interface {
+		ErrorMsg() string
+	}
 )
 
 // New creates a new [*Error]
@@ -67,6 +72,11 @@ func (e *Error) Error() string {
 	b := strings.Builder{}
 	e.WriteError(&b)
 	return b.String()
+}
+
+// ErrorMsg returns the error message
+func (e *Error) ErrorMsg() string {
+	return e.Message
 }
 
 // Unwrap implements [errors.Unwrap]
