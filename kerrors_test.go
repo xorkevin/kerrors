@@ -89,20 +89,8 @@ func TestError(t *testing.T) {
 }
 
 type (
-	stackStringerMatcher struct {
-		s StackStringer
-	}
-
 	notStackStringMatcher struct{}
 )
-
-func (m *stackStringerMatcher) SetStackStringer(s StackStringer) {
-	m.s = s
-}
-
-func (m stackStringerMatcher) Error() string {
-	return "stack string matcher"
-}
 
 func (m notStackStringMatcher) Error() string {
 	return "not stack string matcher"
@@ -141,12 +129,12 @@ func TestStackTrace(t *testing.T) {
 		assert := require.New(t)
 
 		st := NewStackTrace(1)
-		m := stackStringerMatcher{}
+		m := StackStringerMatcher{}
 		assert.ErrorAs(st, &m)
-		assert.True(m.s == st)
+		assert.True(m.StackStringer == st)
 	})
 
-	t.Run("NotAs", func(t *testing.T) {
+	t.Run("Not As", func(t *testing.T) {
 		t.Parallel()
 
 		assert := require.New(t)

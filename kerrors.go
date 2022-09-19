@@ -130,6 +130,11 @@ type (
 		SetStackStringer(s StackStringer)
 	}
 
+	// StackStringerMatcher is a [StackStringerSetter] which captures stack trace providers
+	StackStringerMatcher struct {
+		StackStringer StackStringer
+	}
+
 	// StackTrace is an error stack trace
 	StackTrace struct {
 		n  int
@@ -199,6 +204,15 @@ func (e *StackTrace) As(target interface{}) bool {
 		return true
 	}
 	return false
+}
+
+// SetStackStringer implements [StackStringerSetter]
+func (m *StackStringerMatcher) SetStackStringer(s StackStringer) {
+	m.StackStringer = s
+}
+
+func (m StackStringerMatcher) Error() string {
+	return "stack stringer matcher"
 }
 
 // Format implements [fmt.Formatter]
