@@ -120,6 +120,16 @@ func OptSkip(skip int) ErrorOpt {
 }
 
 type (
+	// StackStringer returns a stacktrace string
+	StackStringer interface {
+		StackString() string
+	}
+
+	// StackStringerSetter sets a StackStringer
+	StackStringerSetter interface {
+		SetStackStringer(s StackStringer)
+	}
+
 	// StackTrace is an error stack trace
 	StackTrace struct {
 		n  int
@@ -176,9 +186,19 @@ func (e *StackTrace) StackFormat(format string) string {
 	return b.String()
 }
 
-// StackString formats each frame of the stack trace with the default format
+// StackString implements [StackStringer] and formats each frame of the stack
+// trace with the default format
 func (e *StackTrace) StackString() string {
 	return e.StackFormat("%[1]f\n\t%[1]e:%[1]l (0x%[1]c)\n")
+}
+
+// As implements [errors.As]
+func (e *StackTrace) As(target interface{}) bool {
+	if s, ok := target.(StackStringerSetter); ok {
+		s.SetStackStringer(e)
+		return true
+	}
+	return false
 }
 
 // Format implements [fmt.Formatter]
