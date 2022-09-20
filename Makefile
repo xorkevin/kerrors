@@ -13,22 +13,17 @@ all: test ## Default
 ## TESTS
 
 TEST_ARGS?=
-COVERAGE=cover.out
-COVERAGE_ARGS=-covermode count -coverprofile $(COVERAGE)
-BENCHMARK_ARGS=-benchtime 5s -benchmem
+COVERAGE?=cover.out
 
 .PHONY: test coverage cover bench
 
 test: ## Run tests
-	go test -trimpath -ldflags "-w -s" $(TEST_ARGS) -cover $(COVERAGE_ARGS) ./...
+	go test -race -trimpath -ldflags "-w -s" $(TEST_ARGS) -cover -covermode atomic -coverprofile $(COVERAGE) ./...
 
 coverage: ## View test coverage
 	go tool cover -html $(COVERAGE)
 
 cover: test coverage ## Create coverage report
-
-bench: ## Run benchmarks
-	go test -bench . $(BENCHMARK_ARGS)
 
 ## FMT
 
