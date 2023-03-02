@@ -1,38 +1,30 @@
-## PROLOG
-
-.PHONY: help all
-
-CMDNAME=kerrors
-CMDDESC=errors with context
-
-help: ## Print this help
-	@./help.sh '$(CMDNAME)' '$(CMDDESC)'
-
-all: test ## Default
-
-## TESTS
-
 TEST_ARGS?=
-COVERAGE?=cover.out
+TEST_PACKAGE?=./...
 
-.PHONY: test coverage cover bench
+COVERAGE_OUT?=cover.out
+COVERAGE_HTML?=coverage.html
 
-test: ## Run tests
-	go test -race -trimpath -ldflags "-w -s" $(TEST_ARGS) -cover -covermode atomic -coverprofile $(COVERAGE) ./...
+COVERAGE_ARGS=-cover -covermode atomic -coverprofile $(COVERAGE_OUT)
 
-coverage: ## View test coverage
-	go tool cover -html $(COVERAGE)
+.PHONY: test testcover coverage cover
 
-cover: test coverage ## Create coverage report
+test:
+	go test -trimpath -ldflags "-w -s" -race $(TEST_ARGS) $(TEST_PACKAGE)
 
-## FMT
+testcover:
+	go test -trimpath -ldflags "-w -s" -race $(COVERAGE_ARGS) $(TEST_ARGS) $(TEST_PACKAGE)
+
+coverage:
+	go tool cover -html $(COVERAGE_OUT) -o $(COVERAGE_HTML)
+
+cover: testcover coverage
 
 .PHONY: fmt vet prepare
 
-fmt: ## Run go fmt
+fmt:
 	goimports -w .
 
-vet: ## Lint code
+vet:
 	go vet ./...
 
-prepare: fmt vet ## Prepare code for PR
+prepare: fmt vet
