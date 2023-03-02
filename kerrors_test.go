@@ -2,7 +2,6 @@ package kerrors
 
 import (
 	"errors"
-	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -96,9 +95,9 @@ func TestError(t *testing.T) {
 func TestStackTrace(t *testing.T) {
 	t.Parallel()
 
-	stackRegex := regexp.MustCompile(`^(?:\S+\n\t\S+:\d+ \(0x[0-9a-f]+\)\n)+$`)
+	stackRegex := regexp.MustCompile(`^(?:\S+\n\t\S+:\d+\n)+$`)
 
-	t.Run("StackFormat", func(t *testing.T) {
+	t.Run("StackString", func(t *testing.T) {
 		t.Parallel()
 
 		assert := require.New(t)
@@ -117,7 +116,7 @@ func TestStackTrace(t *testing.T) {
 
 		st := NewStackTrace(8)
 		assert.Equal("", st.Error())
-		assert.Equal("", st.StackFormat(""))
+		assert.Equal("", st.StackString())
 	})
 
 	t.Run("As", func(t *testing.T) {
@@ -130,38 +129,4 @@ func TestStackTrace(t *testing.T) {
 		assert.ErrorAs(st, &stackstringer)
 		assert.True(stackstringer == st)
 	})
-}
-
-func TestStackFrame(t *testing.T) {
-	t.Parallel()
-
-	assert := require.New(t)
-
-	assert.Equal("someFunc file.go:127 (0x271)", fmt.Sprintf("%+v", StackFrame{
-		Function: "someFunc",
-		File:     "file.go",
-		Line:     127,
-		PC:       0x271,
-	}))
-
-	assert.Equal("someFunc file.go:127", fmt.Sprintf("%v", StackFrame{
-		Function: "someFunc",
-		File:     "file.go",
-		Line:     127,
-		PC:       0x271,
-	}))
-
-	assert.Equal("someFunc file.go:127", fmt.Sprintf("%s", StackFrame{
-		Function: "someFunc",
-		File:     "file.go",
-		Line:     127,
-		PC:       0x271,
-	}))
-
-	assert.Equal("%!z(StackFrame=someFunc file.go:127)", fmt.Sprintf("%z", StackFrame{
-		Function: "someFunc",
-		File:     "file.go",
-		Line:     127,
-		PC:       0x271,
-	}))
 }

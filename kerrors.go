@@ -2,7 +2,6 @@ package kerrors
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"runtime"
 	"strconv"
@@ -140,14 +139,6 @@ type (
 		n  int
 		pc [128]uintptr
 	}
-
-	// StackFrame is a stack trace frame
-	StackFrame struct {
-		Function string
-		File     string
-		Line     int
-		PC       uintptr
-	}
 )
 
 // NewStackTrace creates a new [*StackTrace]
@@ -164,7 +155,11 @@ func (e *StackTrace) WriteError(b io.Writer) {
 	}
 	frameIter := runtime.CallersFrames(e.pc[:1])
 	f, _ := frameIter.Next()
-	fmt.Fprint(b, runtimeFrameToFrame(f))
+	io.WriteString(b, f.Function)
+	io.WriteString(b, " ")
+	io.WriteString(b, f.File)
+	io.WriteString(b, ":")
+	io.WriteString(b, strconv.Itoa(f.Line))
 }
 
 // Error implements error and prints the stack trace
@@ -174,68 +169,31 @@ func (e *StackTrace) Error() string {
 	return b.String()
 }
 
-// StackFormat formats each frame of the stack trace with the format specifier
-func (e *StackTrace) StackFormat(format string) string {
-	if e.n <= 0 {
-		return ""
-	}
-	var b strings.Builder
-	frameIter := runtime.CallersFrames(e.pc[:e.n])
-	for {
-		f, more := frameIter.Next()
-		fmt.Fprintf(&b, format, runtimeFrameToFrame(f))
-		if !more {
-			break
-		}
-	}
-	return b.String()
+func (e *StackTrace) PC() []uintptr {
+	return e.pc[:e.n]
 }
 
 // StackString implements [StackStringer] and formats each frame of the stack
 // trace with the default format
 func (e *StackTrace) StackString() string {
-	return e.StackFormat("%[1]f\n\t%[1]e:%[1]l (0x%[1]c)\n")
-}
-
-// Format implements [fmt.Formatter]
-//
-//   - %f   function name
-//   - %e   file path
-//   - %l   file line number
-//   - %c   program counter in hex
-//   - %s   equivalent to error string "%f %e:%l"
-//   - %v   equivalent to error string "%f %e:%l"
-//   - %+v  equivalent to stack string "%f %e:%l (0x%c)"
-func (f StackFrame) Format(s fmt.State, verb rune) {
-	switch verb {
-	case 'f':
-		io.WriteString(s, f.Function)
-	case 'e':
-		io.WriteString(s, f.File)
-	case 'l':
-		io.WriteString(s, strconv.Itoa(f.Line))
-	case 'c':
-		io.WriteString(s, strconv.FormatUint(uint64(f.PC), 16))
-	case 's':
-		fmt.Fprintf(s, "%s %s:%s", f.Function, f.File, strconv.Itoa(f.Line))
-	case 'v':
-		if s.Flag('+') {
-			fmt.Fprintf(s, "%s %s:%s (0x%s)", f.Function, f.File, strconv.Itoa(f.Line), strconv.FormatUint(uint64(f.PC), 16))
-		} else {
-			fmt.Fprintf(s, "%s %s:%s", f.Function, f.File, strconv.Itoa(f.Line))
+	if e.n <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	frameIter := runtime.CallersFrames(e.PC())
+	for {
+		f, more := frameIter.Next()
+		b.WriteString(f.Function)
+		b.WriteString("\n\t")
+		b.WriteString(f.File)
+		b.WriteString(":")
+		b.WriteString(strconv.Itoa(f.Line))
+		b.WriteByte('\n')
+		if !more {
+			break
 		}
-	default:
-		fmt.Fprintf(s, "%%!%c(StackFrame=%v)", verb, f)
 	}
-}
-
-func runtimeFrameToFrame(f runtime.Frame) StackFrame {
-	return StackFrame{
-		Function: f.Function,
-		File:     f.File,
-		Line:     f.Line,
-		PC:       f.PC,
-	}
+	return b.String()
 }
 
 func addStackTrace(err error, skip int) error {
