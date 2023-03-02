@@ -21,7 +21,7 @@ func (e testErr) Error() string {
 func TestError(t *testing.T) {
 	t.Parallel()
 
-	stackRegex := regexp.MustCompile(`Stack trace \[\S+ \S+:\d+\]`)
+	stackRegex := regexp.MustCompile(`Stack trace\n\[\[\n\S+ \S+:\d+\n\]\]`)
 
 	errorsErr := errors.New("test errors err")
 	nestedErr := WithKind(WithMsg(errorsErr, "another message"), testErr{}, "test error message")
@@ -38,28 +38,28 @@ func TestError(t *testing.T) {
 			Opts:   []ErrorOpt{OptMsg("test message 123"), OptKind(errorsErr)},
 			Msg:    "test message 123",
 			Kind:   errorsErr,
-			ErrMsg: "test message 123 [test errors err]: %!(STACKTRACE)",
+			ErrMsg: "test message 123\n[[\ntest errors err\n]]\n--\n%!(STACKTRACE)\n",
 		},
 		{
 			Test:   "produces an error with an error struct kind and message",
 			Opts:   []ErrorOpt{OptMsg("test message 321"), OptKind(testErr{})},
 			Msg:    "test message 321",
 			Kind:   testErr{},
-			ErrMsg: "test message 321 [test struct err]: %!(STACKTRACE)",
+			ErrMsg: "test message 321\n[[\ntest struct err\n]]\n--\n%!(STACKTRACE)\n",
 		},
 		{
 			Test:   "produces an error with a deeply nested error",
 			Opts:   []ErrorOpt{OptMsg("test message 654"), OptKind(errors.New("other error")), OptInner(nestedErr)},
 			Msg:    "test message 654",
 			Kind:   testErr{},
-			ErrMsg: "test message 654 [other error]: test error message [test struct err]: another message: %!(STACKTRACE): test errors err",
+			ErrMsg: "test message 654\n[[\nother error\n]]\n--\ntest error message\n[[\ntest struct err\n]]\n--\nanother message\n--\n%!(STACKTRACE)\n--\ntest errors err\n",
 		},
 		{
 			Test:   "ignores kind if not provided",
 			Opts:   []ErrorOpt{OptMsg("test message 654"), OptInner(nestedErr)},
 			Msg:    "test message 654",
 			Kind:   testErr{},
-			ErrMsg: "test message 654: test error message [test struct err]: another message: %!(STACKTRACE): test errors err",
+			ErrMsg: "test message 654\n--\ntest error message\n[[\ntest struct err\n]]\n--\nanother message\n--\n%!(STACKTRACE)\n--\ntest errors err\n",
 		},
 	} {
 		tc := tc

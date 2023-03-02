@@ -13,8 +13,7 @@ type (
 	// Error is an error with context
 	Error struct {
 		Message string
-		Kind    error
-		Inner   error
+		wrapped [2]error
 		skip    int
 	}
 
@@ -22,6 +21,8 @@ type (
 	ErrorOpt = func(e *Error)
 
 	// ErrorWriter writes errors to an [io.Writer]
+	//
+	// WriteError must write an error string ending with a newline.
 	ErrorWriter interface {
 		WriteError(b io.Writer)
 	}
@@ -40,35 +41,40 @@ func New(opts ...ErrorOpt) error {
 	for _, i := range opts {
 		i(e)
 	}
-	e.Inner = addStackTrace(e.Inner, 1+e.skip)
+	e.wrapped[1] = addStackTrace(e.wrapped[1], 1+e.skip)
 	return e
 }
 
 // WriteError implements [ErrorWriter]
+//
+// WriteError must write an error string ending with a newline.
 func (e *Error) WriteError(b io.Writer) {
 	io.WriteString(b, e.Message)
-	if e.Kind != nil {
-		io.WriteString(b, " [")
-		if k, ok := e.Kind.(ErrorWriter); ok {
+	io.WriteString(b, "\n")
+	if e.wrapped[0] != nil {
+		io.WriteString(b, "[[\n")
+		if k, ok := e.wrapped[0].(ErrorWriter); ok {
 			k.WriteError(b)
 		} else {
-			io.WriteString(b, e.Kind.Error())
+			io.WriteString(b, e.wrapped[0].Error())
+			io.WriteString(b, "\n")
 		}
-		io.WriteString(b, "]")
+		io.WriteString(b, "]]\n")
 	}
-	if e.Inner != nil {
-		io.WriteString(b, ": ")
-		if k, ok := e.Inner.(ErrorWriter); ok {
+	if e.wrapped[1] != nil {
+		io.WriteString(b, "--\n")
+		if k, ok := e.wrapped[1].(ErrorWriter); ok {
 			k.WriteError(b)
 		} else {
-			io.WriteString(b, e.Inner.Error())
+			io.WriteString(b, e.wrapped[1].Error())
+			io.WriteString(b, "\n")
 		}
 	}
 }
 
 // Error implements error and recursively prints wrapped errors
 func (e *Error) Error() string {
-	b := strings.Builder{}
+	var b strings.Builder
 	e.WriteError(&b)
 	return b.String()
 }
@@ -79,24 +85,16 @@ func (e *Error) ErrorMsg() string {
 }
 
 // Unwrap implements [errors.Unwrap]
-func (e *Error) Unwrap() error {
-	return e.Inner
-}
-
-// Is implements [errors.Is]
-func (e *Error) Is(target error) bool {
-	if e.Kind == nil {
-		return false
+func (e *Error) Unwrap() []error {
+	start := 0
+	end := 2
+	if e.wrapped[0] == nil {
+		start = 1
 	}
-	return errors.Is(e.Kind, target)
-}
-
-// As implements [errors.As]
-func (e *Error) As(target interface{}) bool {
-	if e.Kind == nil {
-		return false
+	if e.wrapped[1] == nil {
+		end = 1
 	}
-	return errors.As(e.Kind, target)
+	return e.wrapped[start:end]
 }
 
 // OptMsg returns an [ErrorOpt] that sets [Error] Message
@@ -109,14 +107,14 @@ func OptMsg(msg string) ErrorOpt {
 // OptKind returns an [ErrorOpt] that sets [Error] Kind
 func OptKind(kind error) ErrorOpt {
 	return func(e *Error) {
-		e.Kind = kind
+		e.wrapped[0] = kind
 	}
 }
 
 // OptInner returns an [ErrorOpt] that sets [Error] Inner
 func OptInner(inner error) ErrorOpt {
 	return func(e *Error) {
-		e.Inner = inner
+		e.wrapped[1] = inner
 	}
 }
 
@@ -164,11 +162,12 @@ func (e *StackTrace) WriteError(b io.Writer) {
 	frameIter := runtime.CallersFrames(e.pc[:1])
 	f, _ := frameIter.Next()
 	fmt.Fprint(b, runtimeFrameToFrame(f))
+	io.WriteString(b, "\n")
 }
 
 // Error implements error and prints the stack trace
 func (e *StackTrace) Error() string {
-	b := strings.Builder{}
+	var b strings.Builder
 	e.WriteError(&b)
 	return b.String()
 }
@@ -178,7 +177,7 @@ func (e *StackTrace) StackFormat(format string) string {
 	if e.n <= 0 {
 		return ""
 	}
-	b := strings.Builder{}
+	var b strings.Builder
 	frameIter := runtime.CallersFrames(e.pc[:e.n])
 	for {
 		f, more := frameIter.Next()
@@ -242,10 +241,11 @@ func addStackTrace(err error, skip int) error {
 	if err != nil && errors.As(err, &e) {
 		return err
 	}
+	// construct an error to avoid infinite recursive loop
 	return &Error{
 		Message: "Stack trace",
-		Kind:    NewStackTrace(1 + skip),
-		Inner:   err,
+		wrapped: [2]error{NewStackTrace(1 + skip), err},
+		skip:    0,
 	}
 }
 
