@@ -21,8 +21,6 @@ type (
 	ErrorOpt = func(e *Error)
 
 	// ErrorWriter writes errors to an [io.Writer]
-	//
-	// WriteError must write an error string ending with a newline.
 	ErrorWriter interface {
 		WriteError(b io.Writer)
 	}
@@ -46,28 +44,23 @@ func New(opts ...ErrorOpt) error {
 }
 
 // WriteError implements [ErrorWriter]
-//
-// WriteError must write an error string ending with a newline.
 func (e *Error) WriteError(b io.Writer) {
 	io.WriteString(b, e.Message)
-	io.WriteString(b, "\n")
 	if e.wrapped[0] != nil {
-		io.WriteString(b, "[[\n")
+		io.WriteString(b, "\n[[\n")
 		if k, ok := e.wrapped[0].(ErrorWriter); ok {
 			k.WriteError(b)
 		} else {
 			io.WriteString(b, e.wrapped[0].Error())
-			io.WriteString(b, "\n")
 		}
-		io.WriteString(b, "]]\n")
+		io.WriteString(b, "\n]]")
 	}
 	if e.wrapped[1] != nil {
-		io.WriteString(b, "--\n")
+		io.WriteString(b, "\n--\n")
 		if k, ok := e.wrapped[1].(ErrorWriter); ok {
 			k.WriteError(b)
 		} else {
 			io.WriteString(b, e.wrapped[1].Error())
-			io.WriteString(b, "\n")
 		}
 	}
 }
@@ -162,7 +155,6 @@ func (e *StackTrace) WriteError(b io.Writer) {
 	frameIter := runtime.CallersFrames(e.pc[:1])
 	f, _ := frameIter.Next()
 	fmt.Fprint(b, runtimeFrameToFrame(f))
-	io.WriteString(b, "\n")
 }
 
 // Error implements error and prints the stack trace
