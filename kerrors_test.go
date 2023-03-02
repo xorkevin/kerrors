@@ -103,7 +103,7 @@ func TestStackTrace(t *testing.T) {
 
 		assert := require.New(t)
 
-		st := NewStackTrace(1)
+		st := NewStackTrace(0)
 		stackstr := st.StackString()
 		assert.Regexp(stackRegex, stackstr)
 		assert.Contains(stackstr, "xorkevin.dev/kerrors/kerrors_test.go")
@@ -125,7 +125,7 @@ func TestStackTrace(t *testing.T) {
 
 		assert := require.New(t)
 
-		st := NewStackTrace(1)
+		st := NewStackTrace(0)
 		var stackstringer StackStringer
 		assert.ErrorAs(st, &stackstringer)
 		assert.True(stackstringer == st)

@@ -35,8 +35,7 @@ type (
 // New creates a new [*Error]
 func New(opts ...ErrorOpt) error {
 	e := &Error{
-		// assume that the caller wants the line at which New is called
-		skip: 1,
+		skip: 0,
 	}
 	for _, i := range opts {
 		i(e)
@@ -153,7 +152,7 @@ type (
 // NewStackTrace creates a new [*StackTrace]
 func NewStackTrace(skip int) *StackTrace {
 	e := &StackTrace{}
-	e.n = runtime.Callers(1+skip, e.pc[:])
+	e.n = runtime.Callers(2+skip, e.pc[:])
 	return e
 }
 
