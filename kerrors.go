@@ -39,28 +39,28 @@ func New(opts ...ErrorOpt) error {
 	for _, i := range opts {
 		i(e)
 	}
-	e.wrapped[1] = addStackTrace(e.wrapped[1], 1+e.skip)
+	e.wrapped[1] = addStackTrace(e.Inner(), 1+e.skip)
 	return e
 }
 
 // WriteError implements [ErrorWriter]
 func (e *Error) WriteError(b io.Writer) {
 	io.WriteString(b, e.Message)
-	if e.wrapped[0] != nil {
+	if kind := e.Kind(); kind != nil {
 		io.WriteString(b, "\n[[\n")
-		if k, ok := e.wrapped[0].(ErrorWriter); ok {
+		if k, ok := kind.(ErrorWriter); ok {
 			k.WriteError(b)
 		} else {
-			io.WriteString(b, e.wrapped[0].Error())
+			io.WriteString(b, kind.Error())
 		}
 		io.WriteString(b, "\n]]")
 	}
-	if e.wrapped[1] != nil {
+	if inner := e.Inner(); inner != nil {
 		io.WriteString(b, "\n--\n")
-		if k, ok := e.wrapped[1].(ErrorWriter); ok {
+		if k, ok := inner.(ErrorWriter); ok {
 			k.WriteError(b)
 		} else {
-			io.WriteString(b, e.wrapped[1].Error())
+			io.WriteString(b, inner.Error())
 		}
 	}
 }
@@ -88,6 +88,16 @@ func (e *Error) Unwrap() []error {
 		end = 1
 	}
 	return e.wrapped[start:end]
+}
+
+// Kind returns the error kind
+func (e *Error) Kind() error {
+	return e.wrapped[0]
+}
+
+// Inner returns the inner wrapped error
+func (e *Error) Inner() error {
+	return e.wrapped[1]
 }
 
 // OptMsg returns an [ErrorOpt] that sets [Error] Message
