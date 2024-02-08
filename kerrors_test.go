@@ -61,7 +61,6 @@ func TestError(t *testing.T) {
 			ErrMsg: "test message 654\n--\ntest error message\n[[\ntest struct err\n]]\n--\nanother message\n--\n%!(STACKTRACE)\n--\ntest errors err",
 		},
 	} {
-		tc := tc
 		t.Run(tc.Test, func(t *testing.T) {
 			t.Parallel()
 
