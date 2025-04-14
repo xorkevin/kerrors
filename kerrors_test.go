@@ -68,13 +68,13 @@ func TestError(t *testing.T) {
 
 			err := New(tc.Opts...)
 			assert.Error(err)
-			var msger ErrorMsger
-			assert.ErrorAs(err, &msger)
+			msger, ok := Find[ErrorMsger](err)
+			assert.True(ok)
 			assert.Equal(tc.Msg, msger.ErrorMsg())
-			var stackstringer StackStringer
-			assert.ErrorAs(err, &stackstringer)
-			var k *Error
-			assert.ErrorAs(err, &k)
+			_, ok = Find[StackStringer](err)
+			assert.True(ok)
+			k, ok := Find[*Error](err)
+			assert.True(ok)
 			assert.Equal(tc.Msg, k.Message)
 			errMsg := err.Error()
 			assert.Regexp(stackRegex, errMsg)
@@ -85,8 +85,8 @@ func TestError(t *testing.T) {
 			if tc.Kind != nil {
 				assert.ErrorIs(err, tc.Kind)
 			}
-			var s *StackTrace
-			assert.ErrorAs(err, &s)
+			_, ok = Find[*StackTrace](err)
+			assert.True(ok)
 		})
 	}
 }
@@ -124,8 +124,81 @@ func TestStackTrace(t *testing.T) {
 		assert := require.New(t)
 
 		st := NewStackTrace(0)
-		var stackstringer StackStringer
-		assert.ErrorAs(st, &stackstringer)
+		stackstringer, ok := Find[StackStringer](st)
+		assert.True(ok)
 		assert.True(stackstringer == st)
+	})
+}
+
+type (
+	testBaseError struct{}
+
+	testSingleUnwrapError struct {
+		wrapped error
+	}
+
+	testAsError struct{}
+)
+
+func (e *testBaseError) Error() string {
+	return "Test base error"
+}
+
+func (e *testSingleUnwrapError) Error() string {
+	return "Test single unwrap error"
+}
+
+func (e *testSingleUnwrapError) Unwrap() error {
+	return e.wrapped
+}
+
+func (e *testAsError) Error() string {
+	return "Test as error"
+}
+
+func (e *testAsError) As(t any) bool {
+	if k, ok := t.(**testBaseError); ok {
+		*k = &testBaseError{}
+		return true
+	}
+	return false
+}
+
+func TestFind(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil error", func(t *testing.T) {
+		t.Parallel()
+
+		assert := require.New(t)
+
+		err, ok := Find[*testBaseError](nil)
+		assert.False(ok)
+		assert.True(err == nil)
+	})
+
+	t.Run("single unwrap error", func(t *testing.T) {
+		t.Parallel()
+
+		assert := require.New(t)
+
+		errorsErr := &testBaseError{}
+		nestedErr := &testSingleUnwrapError{wrapped: errorsErr}
+
+		err, ok := Find[*testBaseError](nestedErr)
+		assert.True(ok)
+		assert.True(err == errorsErr)
+	})
+
+	t.Run("as error", func(t *testing.T) {
+		t.Parallel()
+
+		assert := require.New(t)
+
+		asErr := &testAsError{}
+
+		err, ok := Find[*testBaseError](asErr)
+		assert.True(ok)
+		assert.NotNil(err)
 	})
 }

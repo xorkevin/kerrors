@@ -218,3 +218,48 @@ func WithMsg(err error, msg string) error {
 func WithKind(err error, kind error, msg string) error {
 	return New(OptMsg(msg), OptKind(kind), OptInner(err), OptSkip(1))
 }
+
+type (
+	errorAser interface {
+		As(any) bool
+	}
+
+	errorUnwrapper interface {
+		Unwrap() []error
+	}
+
+	errorSingleUnwrapper interface {
+		Unwrap() error
+	}
+)
+
+func Find[T any](err error) (T, bool) {
+	if err == nil {
+		var t T
+		return t, false
+	}
+
+	if t, ok := err.(T); ok {
+		return t, true
+	}
+
+	switch k := err.(type) {
+	case errorAser:
+		{
+			var t T
+			if k.As(&t) {
+				return t, true
+			}
+		}
+	case errorUnwrapper:
+		for _, e := range k.Unwrap() {
+			if t, ok := Find[T](e); ok {
+				return t, true
+			}
+		}
+	case errorSingleUnwrapper:
+		return Find[T](k.Unwrap())
+	}
+	var t T
+	return t, false
+}
