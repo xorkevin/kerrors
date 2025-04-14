@@ -20,7 +20,7 @@ func (e testErr) Error() string {
 func TestError(t *testing.T) {
 	t.Parallel()
 
-	stackRegex := regexp.MustCompile(`Stack trace\n\[\[\n\S+ \S+:\d+\n\]\]`)
+	stackRegex := regexp.MustCompile(`Stack trace \(\S+ \S+:\d+\)`)
 
 	errorsErr := errors.New("test errors err")
 	nestedErr := WithKind(WithMsg(errorsErr, "another message"), testErr{}, "test error message")
@@ -28,37 +28,38 @@ func TestError(t *testing.T) {
 	for _, tc := range []struct {
 		Test   string
 		Opts   []ErrorOpt
-		Msg    string
 		Kind   error
 		ErrMsg string
 	}{
 		{
 			Test:   "produces an error with an errors kind and message",
 			Opts:   []ErrorOpt{OptMsg("test message 123"), OptKind(errorsErr)},
-			Msg:    "test message 123",
 			Kind:   errorsErr,
-			ErrMsg: "test message 123\n[[\ntest errors err\n]]\n--\n%!(STACKTRACE)",
+			ErrMsg: "test message 123\n--\n[[\ntest errors err\n]]\n[[\n%!(STACKTRACE)\n]]",
 		},
 		{
 			Test:   "produces an error with an error struct kind and message",
 			Opts:   []ErrorOpt{OptMsg("test message 321"), OptKind(testErr{})},
-			Msg:    "test message 321",
 			Kind:   testErr{},
-			ErrMsg: "test message 321\n[[\ntest struct err\n]]\n--\n%!(STACKTRACE)",
+			ErrMsg: "test message 321\n--\n[[\ntest struct err\n]]\n[[\n%!(STACKTRACE)\n]]",
 		},
 		{
 			Test:   "produces an error with a deeply nested error",
 			Opts:   []ErrorOpt{OptMsg("test message 654"), OptKind(errors.New("other error")), OptInner(nestedErr)},
-			Msg:    "test message 654",
 			Kind:   testErr{},
-			ErrMsg: "test message 654\n[[\nother error\n]]\n--\ntest error message\n[[\ntest struct err\n]]\n--\nanother message\n--\n%!(STACKTRACE)\n--\ntest errors err",
+			ErrMsg: "test message 654\n--\n[[\nother error\n]]\n[[\ntest error message\n--\n[[\ntest struct err\n]]\n[[\nanother message\n--\n[[\n%!(STACKTRACE)\n--\n[[\ntest errors err\n]]\n]]\n]]\n]]",
 		},
 		{
 			Test:   "ignores kind if not provided",
 			Opts:   []ErrorOpt{OptMsg("test message 654"), OptInner(nestedErr)},
-			Msg:    "test message 654",
 			Kind:   testErr{},
-			ErrMsg: "test message 654\n--\ntest error message\n[[\ntest struct err\n]]\n--\nanother message\n--\n%!(STACKTRACE)\n--\ntest errors err",
+			ErrMsg: "test message 654\n--\n[[\ntest error message\n--\n[[\ntest struct err\n]]\n[[\nanother message\n--\n[[\n%!(STACKTRACE)\n--\n[[\ntest errors err\n]]\n]]\n]]\n]]",
+		},
+		{
+			Test:   "finds error kinds through stack traces",
+			Opts:   []ErrorOpt{OptMsg("test message 654"), OptInner(nestedErr)},
+			Kind:   errorsErr,
+			ErrMsg: "test message 654\n--\n[[\ntest error message\n--\n[[\ntest struct err\n]]\n[[\nanother message\n--\n[[\n%!(STACKTRACE)\n--\n[[\ntest errors err\n]]\n]]\n]]\n]]",
 		},
 	} {
 		t.Run(tc.Test, func(t *testing.T) {
@@ -68,15 +69,9 @@ func TestError(t *testing.T) {
 
 			err := New(tc.Opts...)
 			assert.Error(err)
-			msger, ok := Find[ErrorMsger](err)
-			assert.True(ok)
-			assert.Equal(tc.Msg, msger.ErrorMsg())
-			_, ok = Find[StackStringer](err)
-			assert.True(ok)
-			k, ok := Find[*Error](err)
-			assert.True(ok)
-			assert.Equal(tc.Msg, k.Message)
-			errMsg := err.Error()
+			var b strings.Builder
+			assert.NoError(WriteError(&b, err))
+			errMsg := b.String()
 			assert.Regexp(stackRegex, errMsg)
 			stackstr := stackRegex.FindString(errMsg)
 			assert.Contains(stackstr, "xorkevin.dev/kerrors/kerrors_test.go")
@@ -85,6 +80,13 @@ func TestError(t *testing.T) {
 			if tc.Kind != nil {
 				assert.ErrorIs(err, tc.Kind)
 			}
+			kerr, ok := Find[*Error](err)
+			assert.True(ok)
+			assert.True(kerr.Inner() == kerr.wrapped[1])
+			assert.True(kerr.Kind() == kerr.wrapped[0])
+			assert.True(kerr.Error() == kerr.Message)
+			_, ok = Find[StackStringer](err)
+			assert.True(ok)
 			_, ok = Find[*StackTrace](err)
 			assert.True(ok)
 		})
@@ -101,7 +103,7 @@ func TestStackTrace(t *testing.T) {
 
 		assert := require.New(t)
 
-		st := NewStackTrace(0)
+		st := NewStackTrace(nil, 0)
 		stackstr := st.StackString()
 		assert.Regexp(stackRegex, stackstr)
 		assert.Contains(stackstr, "xorkevin.dev/kerrors/kerrors_test.go")
@@ -113,8 +115,8 @@ func TestStackTrace(t *testing.T) {
 
 		assert := require.New(t)
 
-		st := NewStackTrace(8)
-		assert.Equal("", st.Error())
+		st := NewStackTrace(nil, 8)
+		assert.Equal("Stack trace (empty)", st.Error())
 		assert.Equal("", st.StackString())
 	})
 
@@ -123,7 +125,7 @@ func TestStackTrace(t *testing.T) {
 
 		assert := require.New(t)
 
-		st := NewStackTrace(0)
+		st := NewStackTrace(nil, 0)
 		stackstringer, ok := Find[StackStringer](st)
 		assert.True(ok)
 		assert.True(stackstringer == st)

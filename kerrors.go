@@ -1,7 +1,6 @@
 package kerrors
 
 import (
-	"errors"
 	"io"
 	"runtime"
 	"strconv"
@@ -16,18 +15,8 @@ type (
 		skip    int
 	}
 
-	// ErrorOpt is an error options function used by [New]
+	// ErrorOpt is an options function used by [New]
 	ErrorOpt = func(e *Error)
-
-	// ErrorWriter writes errors to an [io.Writer]
-	ErrorWriter interface {
-		WriteError(b io.Writer)
-	}
-
-	// ErrorMsger returns the error message
-	ErrorMsger interface {
-		ErrorMsg() string
-	}
 )
 
 // New creates a new [*Error]
@@ -38,55 +27,23 @@ func New(opts ...ErrorOpt) error {
 	for _, i := range opts {
 		i(e)
 	}
-	e.wrapped[1] = addStackTrace(e.Inner(), 1+e.skip)
+	e.wrapped[1] = AddStackTrace(e.wrapped[1], 1+e.skip)
 	return e
 }
 
-// WriteError implements [ErrorWriter]
-func (e *Error) WriteError(b io.Writer) {
-	io.WriteString(b, e.Message)
-	if kind := e.Kind(); kind != nil {
-		io.WriteString(b, "\n[[\n")
-		if k, ok := kind.(ErrorWriter); ok {
-			k.WriteError(b)
-		} else {
-			io.WriteString(b, kind.Error())
-		}
-		io.WriteString(b, "\n]]")
-	}
-	if inner := e.Inner(); inner != nil {
-		io.WriteString(b, "\n--\n")
-		if k, ok := inner.(ErrorWriter); ok {
-			k.WriteError(b)
-		} else {
-			io.WriteString(b, inner.Error())
-		}
-	}
-}
-
-// Error implements error and recursively prints wrapped errors
+// Error implements error
 func (e *Error) Error() string {
-	var b strings.Builder
-	e.WriteError(&b)
-	return b.String()
-}
-
-// ErrorMsg returns the error message
-func (e *Error) ErrorMsg() string {
 	return e.Message
 }
 
 // Unwrap implements [errors.Unwrap]
 func (e *Error) Unwrap() []error {
 	start := 0
-	end := 2
 	if e.wrapped[0] == nil {
 		start = 1
 	}
-	if e.wrapped[1] == nil {
-		end = 1
-	}
-	return e.wrapped[start:end]
+	// wrapped 1 will always be populated because of stack trace
+	return e.wrapped[start:2]
 }
 
 // Kind returns the error kind
@@ -136,37 +93,43 @@ type (
 
 	// StackTrace is an error stack trace
 	StackTrace struct {
-		n  int
-		pc [128]uintptr
+		wrapped error
+		n       int
+		pc      [128]uintptr
 	}
 )
 
 // NewStackTrace creates a new [*StackTrace]
-func NewStackTrace(skip int) *StackTrace {
-	e := &StackTrace{}
+func NewStackTrace(err error, skip int) *StackTrace {
+	e := &StackTrace{
+		wrapped: err,
+	}
 	e.n = runtime.Callers(2+skip, e.pc[:])
 	return e
-}
-
-// WriteError implements [ErrorWriter] and writes the stack trace
-func (e *StackTrace) WriteError(b io.Writer) {
-	if e.n <= 0 {
-		return
-	}
-	frameIter := runtime.CallersFrames(e.pc[:1])
-	f, _ := frameIter.Next()
-	io.WriteString(b, f.Function)
-	io.WriteString(b, " ")
-	io.WriteString(b, f.File)
-	io.WriteString(b, ":")
-	io.WriteString(b, strconv.Itoa(f.Line))
 }
 
 // Error implements error and prints the stack trace
 func (e *StackTrace) Error() string {
 	var b strings.Builder
-	e.WriteError(&b)
+	io.WriteString(&b, "Stack trace (")
+	if e.n > 0 {
+		frameIter := runtime.CallersFrames(e.pc[:1])
+		f, _ := frameIter.Next()
+		io.WriteString(&b, f.Function)
+		io.WriteString(&b, " ")
+		io.WriteString(&b, f.File)
+		io.WriteString(&b, ":")
+		io.WriteString(&b, strconv.Itoa(f.Line))
+	} else {
+		io.WriteString(&b, "empty")
+	}
+	io.WriteString(&b, ")")
 	return b.String()
+}
+
+// Unwrap implements errors.Unwrap
+func (e *StackTrace) Unwrap() error {
+	return e.wrapped
 }
 
 func (e *StackTrace) PC() []uintptr {
@@ -196,17 +159,13 @@ func (e *StackTrace) StackString() string {
 	return b.String()
 }
 
-func addStackTrace(err error, skip int) error {
-	var e *StackTrace
-	if err != nil && errors.As(err, &e) {
+// AddStackTrace adds a [*StackTrace] if one is not already present in the
+// error chain
+func AddStackTrace(err error, skip int) error {
+	if _, ok := Find[*StackTrace](err); ok {
 		return err
 	}
-	// construct an error to avoid infinite recursive loop
-	return &Error{
-		Message: "Stack trace",
-		wrapped: [2]error{NewStackTrace(1 + skip), err},
-		skip:    0,
-	}
+	return NewStackTrace(err, 1+skip)
 }
 
 // WithMsg returns an error wrapped by an [*Error] with a Message
@@ -220,10 +179,6 @@ func WithKind(err error, kind error, msg string) error {
 }
 
 type (
-	errorAser interface {
-		As(any) bool
-	}
-
 	errorUnwrapper interface {
 		Unwrap() []error
 	}
@@ -231,8 +186,13 @@ type (
 	errorSingleUnwrapper interface {
 		Unwrap() error
 	}
+
+	errorAser interface {
+		As(any) bool
+	}
 )
 
+// Find finds an error of type T in the error chain using [errors.As] rules
 func Find[T any](err error) (T, bool) {
 	if err == nil {
 		var t T
@@ -262,4 +222,55 @@ func Find[T any](err error) (T, bool) {
 	}
 	var t T
 	return t, false
+}
+
+// WriteError writes errors recursively through the error chain
+func WriteError(b io.Writer, target error) error {
+	if target == nil {
+		return nil
+	}
+
+	if _, err := io.WriteString(b, target.Error()); err != nil {
+		return err
+	}
+
+	var wrapped []error
+	switch k := target.(type) {
+	case errorUnwrapper:
+		wrapped = k.Unwrap()
+	case errorSingleUnwrapper:
+		if e := k.Unwrap(); e != nil {
+			wrapped = []error{e}
+		}
+	}
+
+	noWrappedError := true
+	for _, i := range wrapped {
+		if i != nil {
+			noWrappedError = false
+			break
+		}
+	}
+	if noWrappedError {
+		return nil
+	}
+
+	if _, err := io.WriteString(b, "\n--"); err != nil {
+		return err
+	}
+	for _, i := range wrapped {
+		if i == nil {
+			continue
+		}
+		if _, err := io.WriteString(b, "\n[[\n"); err != nil {
+			return err
+		}
+		if err := WriteError(b, i); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(b, "\n]]"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
