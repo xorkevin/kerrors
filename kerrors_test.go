@@ -1,6 +1,7 @@
 package kerrors
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -17,10 +18,29 @@ func (e testErr) Error() string {
 	return "test struct err"
 }
 
+func searchMapKey(data any, key string) map[string]any {
+	switch v := data.(type) {
+	case map[string]any:
+		if _, ok := v[key]; ok {
+			return v
+		}
+		for _, val := range v {
+			if result := searchMapKey(val, key); result != nil {
+				return result
+			}
+		}
+	case []any:
+		for _, val := range v {
+			if result := searchMapKey(val, key); result != nil {
+				return result
+			}
+		}
+	}
+	return nil
+}
+
 func TestError(t *testing.T) {
 	t.Parallel()
-
-	stackRegex := regexp.MustCompile(`Stack trace \(\S+ \S+:\d+\)`)
 
 	errorsErr := errors.New("test errors err")
 	nestedErr := WithKind(WithMsg(errorsErr, "another message"), testErr{}, "test error message")
@@ -29,37 +49,89 @@ func TestError(t *testing.T) {
 		Test   string
 		Opts   []ErrorOpt
 		Kind   error
-		ErrMsg string
+		ErrMsg any
 	}{
 		{
-			Test:   "produces an error with an errors kind and message",
-			Opts:   []ErrorOpt{OptMsg("test message 123"), OptKind(errorsErr)},
-			Kind:   errorsErr,
-			ErrMsg: "test message 123\n--\n[[\ntest errors err\n]]\n[[\n%!(STACKTRACE)\n]]",
+			Test: "produces an error with an errors kind and message",
+			Opts: []ErrorOpt{OptMsg("test message 123"), OptKind(errorsErr)},
+			Kind: errorsErr,
+			ErrMsg: map[string]any{
+				"msg":  "test message 123",
+				"kind": "test errors err",
+				"inner": map[string]any{
+					"msg": "Stack trace",
+				},
+			},
 		},
 		{
-			Test:   "produces an error with an error struct kind and message",
-			Opts:   []ErrorOpt{OptMsg("test message 321"), OptKind(testErr{})},
-			Kind:   testErr{},
-			ErrMsg: "test message 321\n--\n[[\ntest struct err\n]]\n[[\n%!(STACKTRACE)\n]]",
+			Test: "produces an error with an error struct kind and message",
+			Opts: []ErrorOpt{OptMsg("test message 321"), OptKind(testErr{})},
+			Kind: testErr{},
+			ErrMsg: map[string]any{
+				"msg":  "test message 321",
+				"kind": "test struct err",
+				"inner": map[string]any{
+					"msg": "Stack trace",
+				},
+			},
 		},
 		{
-			Test:   "produces an error with a deeply nested error",
-			Opts:   []ErrorOpt{OptMsg("test message 654"), OptKind(errors.New("other error")), OptInner(nestedErr)},
-			Kind:   testErr{},
-			ErrMsg: "test message 654\n--\n[[\nother error\n]]\n[[\ntest error message\n--\n[[\ntest struct err\n]]\n[[\nanother message\n--\n[[\n%!(STACKTRACE)\n--\n[[\ntest errors err\n]]\n]]\n]]\n]]",
+			Test: "produces an error with a deeply nested error",
+			Opts: []ErrorOpt{OptMsg("test message 654"), OptKind(errors.New("other error")), OptInner(nestedErr)},
+			Kind: testErr{},
+			ErrMsg: map[string]any{
+				"msg":  "test message 654",
+				"kind": "other error",
+				"inner": map[string]any{
+					"msg":  "test error message",
+					"kind": "test struct err",
+					"inner": map[string]any{
+						"msg": "another message",
+						"inner": map[string]any{
+							"msg":   "Stack trace",
+							"inner": "test errors err",
+						},
+					},
+				},
+			},
 		},
 		{
-			Test:   "ignores kind if not provided",
-			Opts:   []ErrorOpt{OptMsg("test message 654"), OptInner(nestedErr)},
-			Kind:   testErr{},
-			ErrMsg: "test message 654\n--\n[[\ntest error message\n--\n[[\ntest struct err\n]]\n[[\nanother message\n--\n[[\n%!(STACKTRACE)\n--\n[[\ntest errors err\n]]\n]]\n]]\n]]",
+			Test: "ignores kind if not provided",
+			Opts: []ErrorOpt{OptMsg("test message 654"), OptInner(nestedErr)},
+			Kind: testErr{},
+			ErrMsg: map[string]any{
+				"msg": "test message 654",
+				"inner": map[string]any{
+					"msg":  "test error message",
+					"kind": "test struct err",
+					"inner": map[string]any{
+						"msg": "another message",
+						"inner": map[string]any{
+							"msg":   "Stack trace",
+							"inner": "test errors err",
+						},
+					},
+				},
+			},
 		},
 		{
-			Test:   "finds error kinds through stack traces",
-			Opts:   []ErrorOpt{OptMsg("test message 654"), OptInner(nestedErr)},
-			Kind:   errorsErr,
-			ErrMsg: "test message 654\n--\n[[\ntest error message\n--\n[[\ntest struct err\n]]\n[[\nanother message\n--\n[[\n%!(STACKTRACE)\n--\n[[\ntest errors err\n]]\n]]\n]]\n]]",
+			Test: "finds error kinds through stack traces",
+			Opts: []ErrorOpt{OptMsg("test message 654"), OptInner(nestedErr)},
+			Kind: errorsErr,
+			ErrMsg: map[string]any{
+				"msg": "test message 654",
+				"inner": map[string]any{
+					"msg":  "test error message",
+					"kind": "test struct err",
+					"inner": map[string]any{
+						"msg": "another message",
+						"inner": map[string]any{
+							"msg":   "Stack trace",
+							"inner": "test errors err",
+						},
+					},
+				},
+			},
 		},
 	} {
 		t.Run(tc.Test, func(t *testing.T) {
@@ -69,22 +141,25 @@ func TestError(t *testing.T) {
 
 			err := New(tc.Opts...)
 			assert.Error(err)
-			var b strings.Builder
-			assert.NoError(WriteError(&b, err))
-			errMsg := b.String()
-			assert.Regexp(stackRegex, errMsg)
-			stackstr := stackRegex.FindString(errMsg)
-			assert.Contains(stackstr, "xorkevin.dev/kerrors/kerrors_test.go")
-			assert.Contains(stackstr, "xorkevin.dev/kerrors.TestError")
-			assert.Equal(tc.ErrMsg, stackRegex.ReplaceAllString(errMsg, "%!(STACKTRACE)"))
-			if tc.Kind != nil {
-				assert.ErrorIs(err, tc.Kind)
-			}
+			b, jerr := json.Marshal(err)
+			assert.NoError(jerr)
+			var errMsg map[string]any
+			assert.NoError(json.Unmarshal(b, &errMsg))
+			stackTrace := searchMapKey(errMsg, "stack")
+			assert.NotNil(stackTrace)
+			stack, ok := stackTrace["stack"].([]any)
+			assert.True(ok)
+			assert.NotNil(stack)
+			assert.Contains(stack[0].(map[string]any)["file"], "xorkevin.dev/kerrors/kerrors_test.go")
+			assert.Contains(stack[0].(map[string]any)["fn"], "xorkevin.dev/kerrors.TestError")
+			delete(stackTrace, "stack")
+			assert.Equal(tc.ErrMsg, errMsg)
+			assert.ErrorIs(err, tc.Kind)
 			kerr, ok := Find[*Error](err)
 			assert.True(ok)
 			assert.True(kerr.Inner() == kerr.wrapped[1])
 			assert.True(kerr.Kind() == kerr.wrapped[0])
-			assert.True(kerr.Error() == kerr.Message)
+			assert.True(kerr.Error() == kerr.message)
 			_, ok = Find[StackStringer](err)
 			assert.True(ok)
 			_, ok = Find[*StackTrace](err)
@@ -96,7 +171,7 @@ func TestError(t *testing.T) {
 func TestStackTrace(t *testing.T) {
 	t.Parallel()
 
-	stackRegex := regexp.MustCompile(`^(?:\S+\n\t\S+:\d+\n)+$`)
+	stackRegex := regexp.MustCompile(`^(?:\S+ \S+:\d+)(?:\n\S+ \S+:\d+)*$`)
 
 	t.Run("StackString", func(t *testing.T) {
 		t.Parallel()

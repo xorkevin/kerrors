@@ -1,7 +1,9 @@
 package kerrors
 
 import (
-	"io"
+	"encoding/json"
+	"iter"
+	"log/slog"
 	"runtime"
 	"strconv"
 	"strings"
@@ -10,7 +12,7 @@ import (
 type (
 	// Error is an error with context
 	Error struct {
-		Message string
+		message string
 		wrapped [2]error
 		skip    int
 	}
@@ -33,7 +35,7 @@ func New(opts ...ErrorOpt) error {
 
 // Error implements error
 func (e *Error) Error() string {
-	return e.Message
+	return e.message
 }
 
 // Unwrap implements [errors.Unwrap]
@@ -59,7 +61,7 @@ func (e *Error) Inner() error {
 // OptMsg returns an [ErrorOpt] that sets [Error] Message
 func OptMsg(msg string) ErrorOpt {
 	return func(e *Error) {
-		e.Message = msg
+		e.message = msg
 	}
 }
 
@@ -86,7 +88,52 @@ func OptSkip(skip int) ErrorOpt {
 }
 
 type (
-	// StackStringer returns a stacktrace string
+	strError string
+)
+
+func (e strError) Error() string {
+	return string(e)
+}
+
+func presentError(e error) error {
+	if e == nil {
+		return nil
+	}
+	if _, ok := e.(json.Marshaler); ok {
+		return e
+	}
+	return strError(e.Error())
+}
+
+type (
+	errorJSON struct {
+		Message string `json:"msg"`
+		Kind    error  `json:"kind,omitempty"`
+		Inner   error  `json:"inner,omitempty"`
+	}
+)
+
+func (e *Error) marshalObj() errorJSON {
+	return errorJSON{
+		Message: e.Error(),
+		Kind:    presentError(e.Kind()),
+		Inner:   presentError(e.Inner()),
+	}
+}
+
+// MarshalJSON implements [json.Marshaler] and formats the error in json
+func (e *Error) MarshalJSON() ([]byte, error) {
+	return json.Marshal(e.marshalObj())
+}
+
+// LogValue implements [slog.LogValuer] and returns a plain json object for
+// logging
+func (e *Error) LogValue() slog.Value {
+	return slog.AnyValue(e.marshalObj())
+}
+
+type (
+	// StackStringer returns a stack trace string
 	StackStringer interface {
 		StackString() string
 	}
@@ -111,20 +158,21 @@ func NewStackTrace(err error, skip int) *StackTrace {
 // Error implements error and prints the stack trace
 func (e *StackTrace) Error() string {
 	var b strings.Builder
-	io.WriteString(&b, "Stack trace (")
+	b.WriteString("Stack trace (")
 	if e.n > 0 {
 		frameIter := runtime.CallersFrames(e.pc[:1])
 		f, _ := frameIter.Next()
-		io.WriteString(&b, f.Function)
-		io.WriteString(&b, " ")
-		io.WriteString(&b, f.File)
-		io.WriteString(&b, ":")
-		io.WriteString(&b, strconv.Itoa(f.Line))
+		e.writeStackFrame(&b, f)
 	} else {
-		io.WriteString(&b, "empty")
+		b.WriteString("empty")
 	}
-	io.WriteString(&b, ")")
+	b.WriteString(")")
 	return b.String()
+}
+
+// Inner returns the inner wrapped error
+func (e *StackTrace) Inner() error {
+	return e.wrapped
 }
 
 // Unwrap implements errors.Unwrap
@@ -136,27 +184,92 @@ func (e *StackTrace) PC() []uintptr {
 	return e.pc[:e.n]
 }
 
+func (e *StackTrace) stackIter() iter.Seq[runtime.Frame] {
+	if e.n <= 0 {
+		return func(yield func(runtime.Frame) bool) {
+			return
+		}
+	}
+	return func(yield func(runtime.Frame) bool) {
+		frameIter := runtime.CallersFrames(e.PC())
+		for {
+			f, more := frameIter.Next()
+			if !yield(f) {
+				return
+			}
+			if !more {
+				return
+			}
+		}
+	}
+}
+
+func (e *StackTrace) writeStackFrame(b *strings.Builder, f runtime.Frame) {
+	b.WriteString(f.Function)
+	b.WriteString(" ")
+	b.WriteString(f.File)
+	b.WriteString(":")
+	b.WriteString(strconv.Itoa(f.Line))
+}
+
 // StackString implements [StackStringer] and formats each frame of the stack
 // trace with the default format
 func (e *StackTrace) StackString() string {
-	if e.n <= 0 {
-		return ""
-	}
 	var b strings.Builder
-	frameIter := runtime.CallersFrames(e.PC())
-	for {
-		f, more := frameIter.Next()
-		b.WriteString(f.Function)
-		b.WriteString("\n\t")
-		b.WriteString(f.File)
-		b.WriteString(":")
-		b.WriteString(strconv.Itoa(f.Line))
-		b.WriteByte('\n')
-		if !more {
-			break
+	first := true
+	for f := range e.stackIter() {
+		if first {
+			first = false
+		} else {
+			b.WriteString("\n")
 		}
+		e.writeStackFrame(&b, f)
 	}
 	return b.String()
+}
+
+type (
+	stackFrameJSON struct {
+		Function string `json:"fn"`
+		File     string `json:"file"`
+		Line     int    `json:"line"`
+	}
+
+	stackTraceJSON struct {
+		Message string           `json:"msg"`
+		Stack   []stackFrameJSON `json:"stack,omitempty"`
+		Inner   error            `json:"inner,omitempty"`
+	}
+)
+
+func (e *StackTrace) marshalObj() stackTraceJSON {
+	s := stackTraceJSON{
+		Message: "Stack trace",
+		Inner:   presentError(e.Inner()),
+	}
+	if e.n > 0 {
+		s.Stack = make([]stackFrameJSON, 0, e.n)
+	}
+	for f := range e.stackIter() {
+		s.Stack = append(s.Stack, stackFrameJSON{
+			Function: f.Function,
+			File:     f.File,
+			Line:     f.Line,
+		})
+	}
+	return s
+}
+
+// MarshalJSON implements [json.Marshaler] and formats each frame of the stack
+// trace in json
+func (e *StackTrace) MarshalJSON() ([]byte, error) {
+	return json.Marshal(e.marshalObj())
+}
+
+// LogValue implements [slog.LogValuer] and collects each frame of the stack
+// trace into a log value
+func (e *StackTrace) LogValue() slog.Value {
+	return slog.AnyValue(e.marshalObj())
 }
 
 // AddStackTrace adds a [*StackTrace] if one is not already present in the
@@ -222,55 +335,4 @@ func Find[T any](err error) (T, bool) {
 	}
 	var t T
 	return t, false
-}
-
-// WriteError writes errors recursively through the error chain
-func WriteError(b io.Writer, target error) error {
-	if target == nil {
-		return nil
-	}
-
-	if _, err := io.WriteString(b, target.Error()); err != nil {
-		return err
-	}
-
-	var wrapped []error
-	switch k := target.(type) {
-	case errorUnwrapper:
-		wrapped = k.Unwrap()
-	case errorSingleUnwrapper:
-		if e := k.Unwrap(); e != nil {
-			wrapped = []error{e}
-		}
-	}
-
-	noWrappedError := true
-	for _, i := range wrapped {
-		if i != nil {
-			noWrappedError = false
-			break
-		}
-	}
-	if noWrappedError {
-		return nil
-	}
-
-	if _, err := io.WriteString(b, "\n--"); err != nil {
-		return err
-	}
-	for _, i := range wrapped {
-		if i == nil {
-			continue
-		}
-		if _, err := io.WriteString(b, "\n[[\n"); err != nil {
-			return err
-		}
-		if err := WriteError(b, i); err != nil {
-			return err
-		}
-		if _, err := io.WriteString(b, "\n]]"); err != nil {
-			return err
-		}
-	}
-	return nil
 }
