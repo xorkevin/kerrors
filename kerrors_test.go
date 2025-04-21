@@ -58,7 +58,7 @@ func TestError(t *testing.T) {
 			ErrMsg: map[string]any{
 				"msg":  "test message 123",
 				"kind": "test errors err",
-				"inner": map[string]any{
+				"cause": map[string]any{
 					"msg": "Stack trace",
 				},
 			},
@@ -70,26 +70,26 @@ func TestError(t *testing.T) {
 			ErrMsg: map[string]any{
 				"msg":  "test message 321",
 				"kind": "test struct err",
-				"inner": map[string]any{
+				"cause": map[string]any{
 					"msg": "Stack trace",
 				},
 			},
 		},
 		{
 			Test: "produces an error with a deeply nested error",
-			Opts: []ErrorOpt{OptMsg("test message 654"), OptKind(errors.New("other error")), OptInner(nestedErr)},
+			Opts: []ErrorOpt{OptMsg("test message 654"), OptKind(errors.New("other error")), OptCause(nestedErr)},
 			Kind: testErr{},
 			ErrMsg: map[string]any{
 				"msg":  "test message 654",
 				"kind": "other error",
-				"inner": map[string]any{
+				"cause": map[string]any{
 					"msg":  "test error message",
 					"kind": "test struct err",
-					"inner": map[string]any{
+					"cause": map[string]any{
 						"msg": "another message",
-						"inner": map[string]any{
+						"cause": map[string]any{
 							"msg":   "Stack trace",
-							"inner": "test errors err",
+							"cause": "test errors err",
 						},
 					},
 				},
@@ -97,18 +97,18 @@ func TestError(t *testing.T) {
 		},
 		{
 			Test: "ignores kind if not provided",
-			Opts: []ErrorOpt{OptMsg("test message 654"), OptInner(nestedErr)},
+			Opts: []ErrorOpt{OptMsg("test message 654"), OptCause(nestedErr)},
 			Kind: testErr{},
 			ErrMsg: map[string]any{
 				"msg": "test message 654",
-				"inner": map[string]any{
+				"cause": map[string]any{
 					"msg":  "test error message",
 					"kind": "test struct err",
-					"inner": map[string]any{
+					"cause": map[string]any{
 						"msg": "another message",
-						"inner": map[string]any{
+						"cause": map[string]any{
 							"msg":   "Stack trace",
-							"inner": "test errors err",
+							"cause": "test errors err",
 						},
 					},
 				},
@@ -116,18 +116,38 @@ func TestError(t *testing.T) {
 		},
 		{
 			Test: "finds error kinds through stack traces",
-			Opts: []ErrorOpt{OptMsg("test message 654"), OptInner(nestedErr)},
+			Opts: []ErrorOpt{OptMsg("test message 654"), OptCause(nestedErr)},
 			Kind: errorsErr,
 			ErrMsg: map[string]any{
 				"msg": "test message 654",
-				"inner": map[string]any{
+				"cause": map[string]any{
 					"msg":  "test error message",
 					"kind": "test struct err",
-					"inner": map[string]any{
+					"cause": map[string]any{
 						"msg": "another message",
-						"inner": map[string]any{
+						"cause": map[string]any{
 							"msg":   "Stack trace",
-							"inner": "test errors err",
+							"cause": "test errors err",
+						},
+					},
+				},
+			},
+		},
+		{
+			Test: "handles errors unwrap",
+			Opts: []ErrorOpt{OptMsg("test unwrap"), OptCause(&testUnwrapError{wrapped: []error{&testSingleUnwrapError{wrapped: errorsErr}}})},
+			Kind: errorsErr,
+			ErrMsg: map[string]any{
+				"msg": "test unwrap",
+				"cause": map[string]any{
+					"msg": "Stack trace",
+					"cause": map[string]any{
+						"msg": "Test unwrap error",
+						"cause": []any{
+							map[string]any{
+								"msg":   "Test single unwrap error",
+								"cause": "test errors err",
+							},
 						},
 					},
 				},
@@ -141,7 +161,7 @@ func TestError(t *testing.T) {
 
 			err := New(tc.Opts...)
 			assert.Error(err)
-			b, jerr := json.Marshal(err)
+			b, jerr := json.Marshal(JSONValue(err))
 			assert.NoError(jerr)
 			var errMsg map[string]any
 			assert.NoError(json.Unmarshal(b, &errMsg))
@@ -157,7 +177,7 @@ func TestError(t *testing.T) {
 			assert.ErrorIs(err, tc.Kind)
 			kerr, ok := Find[*Error](err)
 			assert.True(ok)
-			assert.True(kerr.Inner() == kerr.wrapped[1])
+			assert.True(kerr.Cause() == kerr.wrapped[1])
 			assert.True(kerr.Kind() == kerr.wrapped[0])
 			assert.True(kerr.Error() == kerr.message)
 			_, ok = Find[StackStringer](err)
@@ -172,6 +192,19 @@ func TestStackTrace(t *testing.T) {
 	t.Parallel()
 
 	stackRegex := regexp.MustCompile(`^(?:\S+ \S+:\d+)(?:\n\S+ \S+:\d+)*$`)
+	stackMsgRegex := regexp.MustCompile(`^Stack trace \(\S+ \S+:\d+\)$`)
+
+	t.Run("Error", func(t *testing.T) {
+		t.Parallel()
+
+		assert := require.New(t)
+
+		st := NewStackTrace(nil, 0)
+		stackerrmsg := st.Error()
+		assert.Regexp(stackMsgRegex, stackerrmsg)
+		assert.Contains(stackerrmsg, "xorkevin.dev/kerrors/kerrors_test.go")
+		assert.Contains(stackerrmsg, "xorkevin.dev/kerrors.TestStackTrace")
+	})
 
 	t.Run("StackString", func(t *testing.T) {
 		t.Parallel()
@@ -210,6 +243,10 @@ func TestStackTrace(t *testing.T) {
 type (
 	testBaseError struct{}
 
+	testUnwrapError struct {
+		wrapped []error
+	}
+
 	testSingleUnwrapError struct {
 		wrapped error
 	}
@@ -219,6 +256,14 @@ type (
 
 func (e *testBaseError) Error() string {
 	return "Test base error"
+}
+
+func (e *testUnwrapError) Error() string {
+	return "Test unwrap error"
+}
+
+func (e *testUnwrapError) Unwrap() []error {
+	return e.wrapped
 }
 
 func (e *testSingleUnwrapError) Error() string {

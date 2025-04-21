@@ -1,13 +1,64 @@
 package kerrors
 
 import (
-	"encoding/json"
 	"iter"
-	"log/slog"
 	"runtime"
 	"strconv"
 	"strings"
 )
+
+type (
+	errorUnwrapper interface {
+		Unwrap() []error
+	}
+
+	errorSingleUnwrapper interface {
+		Unwrap() error
+	}
+
+	unwrappedErrorJSON struct {
+		Message string `json:"msg"`
+		Cause   any    `json:"cause"`
+	}
+)
+
+type (
+	// JSONValuer is the interface implemented by an error that can convert
+	// itself into a json error value
+	JSONValuer interface {
+		JSONErrorValue() any
+	}
+)
+
+// JSONValue converts an error to a json value recursively
+func JSONValue(err error) any {
+	if err == nil {
+		return nil
+	}
+	switch k := err.(type) {
+	case JSONValuer:
+		return k.JSONErrorValue()
+	case errorUnwrapper:
+		{
+			errs := k.Unwrap()
+			cause := make([]any, 0, len(errs))
+			for _, i := range errs {
+				cause = append(cause, JSONValue(i))
+			}
+			return unwrappedErrorJSON{
+				Message: err.Error(),
+				Cause:   cause,
+			}
+		}
+	case errorSingleUnwrapper:
+		return unwrappedErrorJSON{
+			Message: err.Error(),
+			Cause:   JSONValue(k.Unwrap()),
+		}
+	default:
+		return err.Error()
+	}
+}
 
 type (
 	// Error is an error with context
@@ -53,8 +104,8 @@ func (e *Error) Kind() error {
 	return e.wrapped[0]
 }
 
-// Inner returns the inner wrapped error
-func (e *Error) Inner() error {
+// Cause returns the inner wrapped error
+func (e *Error) Cause() error {
 	return e.wrapped[1]
 }
 
@@ -72,10 +123,10 @@ func OptKind(kind error) ErrorOpt {
 	}
 }
 
-// OptInner returns an [ErrorOpt] that sets [Error] Inner
-func OptInner(inner error) ErrorOpt {
+// OptCause returns an [ErrorOpt] that sets [Error] Cause
+func OptCause(cause error) ErrorOpt {
 	return func(e *Error) {
-		e.wrapped[1] = inner
+		e.wrapped[1] = cause
 	}
 }
 
@@ -88,48 +139,21 @@ func OptSkip(skip int) ErrorOpt {
 }
 
 type (
-	strError string
-)
-
-func (e strError) Error() string {
-	return string(e)
-}
-
-func presentError(e error) error {
-	if e == nil {
-		return nil
-	}
-	if _, ok := e.(json.Marshaler); ok {
-		return e
-	}
-	return strError(e.Error())
-}
-
-type (
 	errorJSON struct {
 		Message string `json:"msg"`
-		Kind    error  `json:"kind,omitempty"`
-		Inner   error  `json:"inner,omitempty"`
+		Kind    any    `json:"kind,omitempty"`
+		Cause   any    `json:"cause,omitempty"`
 	}
 )
 
-func (e *Error) marshalObj() errorJSON {
+// JSONErrorValue implements [JSONValuer] and returns a json representation of
+// the error
+func (e *Error) JSONErrorValue() any {
 	return errorJSON{
 		Message: e.Error(),
-		Kind:    presentError(e.Kind()),
-		Inner:   presentError(e.Inner()),
+		Kind:    JSONValue(e.Kind()),
+		Cause:   JSONValue(e.Cause()),
 	}
-}
-
-// MarshalJSON implements [json.Marshaler] and formats the error in json
-func (e *Error) MarshalJSON() ([]byte, error) {
-	return json.Marshal(e.marshalObj())
-}
-
-// LogValue implements [slog.LogValuer] and returns a plain json object for
-// logging
-func (e *Error) LogValue() slog.Value {
-	return slog.AnyValue(e.marshalObj())
 }
 
 type (
@@ -170,8 +194,8 @@ func (e *StackTrace) Error() string {
 	return b.String()
 }
 
-// Inner returns the inner wrapped error
-func (e *StackTrace) Inner() error {
+// Cause returns the inner wrapped error
+func (e *StackTrace) Cause() error {
 	return e.wrapped
 }
 
@@ -238,14 +262,16 @@ type (
 	stackTraceJSON struct {
 		Message string           `json:"msg"`
 		Stack   []stackFrameJSON `json:"stack,omitempty"`
-		Inner   error            `json:"inner,omitempty"`
+		Cause   any              `json:"cause,omitempty"`
 	}
 )
 
-func (e *StackTrace) marshalObj() stackTraceJSON {
+// JSONErrorValue implements [JSONValuer] and returns a json representation of
+// the error
+func (e *StackTrace) JSONErrorValue() any {
 	s := stackTraceJSON{
 		Message: "Stack trace",
-		Inner:   presentError(e.Inner()),
+		Cause:   JSONValue(e.Cause()),
 	}
 	if e.n > 0 {
 		s.Stack = make([]stackFrameJSON, 0, e.n)
@@ -260,18 +286,6 @@ func (e *StackTrace) marshalObj() stackTraceJSON {
 	return s
 }
 
-// MarshalJSON implements [json.Marshaler] and formats each frame of the stack
-// trace in json
-func (e *StackTrace) MarshalJSON() ([]byte, error) {
-	return json.Marshal(e.marshalObj())
-}
-
-// LogValue implements [slog.LogValuer] and collects each frame of the stack
-// trace into a log value
-func (e *StackTrace) LogValue() slog.Value {
-	return slog.AnyValue(e.marshalObj())
-}
-
 // AddStackTrace adds a [*StackTrace] if one is not already present in the
 // error chain
 func AddStackTrace(err error, skip int) error {
@@ -283,23 +297,15 @@ func AddStackTrace(err error, skip int) error {
 
 // WithMsg returns an error wrapped by an [*Error] with a Message
 func WithMsg(err error, msg string) error {
-	return New(OptMsg(msg), OptInner(err), OptSkip(1))
+	return New(OptMsg(msg), OptCause(err), OptSkip(1))
 }
 
 // WithKind returns an error wrapped by an [*Error] with a Kind and Message
 func WithKind(err error, kind error, msg string) error {
-	return New(OptMsg(msg), OptKind(kind), OptInner(err), OptSkip(1))
+	return New(OptMsg(msg), OptKind(kind), OptCause(err), OptSkip(1))
 }
 
 type (
-	errorUnwrapper interface {
-		Unwrap() []error
-	}
-
-	errorSingleUnwrapper interface {
-		Unwrap() error
-	}
-
 	errorAser interface {
 		As(any) bool
 	}
@@ -325,8 +331,8 @@ func Find[T any](err error) (T, bool) {
 			}
 		}
 	case errorUnwrapper:
-		for _, e := range k.Unwrap() {
-			if t, ok := Find[T](e); ok {
+		for _, i := range k.Unwrap() {
+			if t, ok := Find[T](i); ok {
 				return t, true
 			}
 		}
